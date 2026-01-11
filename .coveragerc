@@ -1,0 +1,39 @@
+[run]
+source = .
+omit =
+    */test_*.py
+    */__pycache__/*
+    */site-packages/*
+    .venv/*
+    .git/*
+    */htmlcov/*
+
+[report]
+# Показывать строки, которые не покрыты тестами
+show_missing = True
+skip_covered = False
+
+# Минимальный процент покрытия для успешного прохождения
+fail_under = 70
+
+# Исключить из отчёта
+exclude_lines =
+    # Не показывать строки с pragma: no cover
+    pragma: no cover
+
+    # Не показывать защитные блоки
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+
+    # Игнорировать импорты
+    ^import
+    ^from.*import
+
+    # Игнорировать пустые функции
+    ^\s*pass\s*$
+
+[html]
+# Настройки HTML-отчёта
+directory = htmlcov
+title = Финансовый трекер - Отчёт о покрытии тестами
