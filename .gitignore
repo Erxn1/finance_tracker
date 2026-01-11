@@ -1,7 +1,27 @@
+# Файлы Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Файлы окружения / виртуальных сред
+.venv/
+venv/
+env/
+
+# Базы данных и сгенерированные данные
+*.db
+*.sqlite
+*.csv
+
+# Файлы IDE (PyCharm)
 .idea/
-echo ".idea/" > .gitignore
-echo "__pycache__/" >> .gitignore
-echo "*.pyc" >> .gitignore
-echo ".env" >> .gitignore
-echo "finance.db" >> .gitignore
-echo ".venv/" >> .gitignore
+.vscode/
+
+# Файлы покрытия тестами
+.coverage
+.coverage.*
+htmlcov/
+
+# Прочее
+.DS_Store
+Thumbs.db
