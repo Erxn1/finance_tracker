@@ -19,13 +19,17 @@
    cd finance_tracker
 Установите зависимости:
 
-bash
-pip install -r requirements.txt
-Запустите приложение:
+```bash 
 
-bash
+pip install -r requirements.txt
+```  
+Запустите приложение:
+```bash
+
 python main.py
+```    
 Структура проекта
+
 main.py - точка входа в приложение
 
 models.py - модели данных (Operation, Category)
