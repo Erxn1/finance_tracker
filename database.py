@@ -1,347 +1,271 @@
 """
-Модуль database.py
-Отвечает за работу с базой данных SQLite: создание, сохранение, чтение, удаление операций.
-Использует паттерн Singleton для создания единственного подключения к БД.
+Работа с базой данных SQLite
 """
 
 import sqlite3
-from contextlib import contextmanager
 from datetime import datetime
-from typing import List, Optional, Dict, Any
-
-# Импортируем наши классы из models.py
-from models import Operation, OperationType, Category
+from typing import List, Optional, Tuple
+from models import Category, Operation, OperationType
 
 
-class DatabaseManager:
-    """
-    Главный класс для управления базой данных.
-    Реализует паттерн Singleton (только один экземпляр).
-    """
+class Database:
+    """Управление базой данных"""
 
-    # Синглтон: храним единственный экземпляр класса
-    _instance = None
-    _connection = None
-    _db_name = "finance.db"
+    def __init__(self, db_path: str = "finance.db"):
+        self.db_path = db_path
+        self.connection = None
+        self._connect()
 
-    def __new__(cls, db_name: str = None):
-        """Метод создания нового экземпляра (часть реализации Singleton)."""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            if db_name:
-                cls._db_name = db_name
-        return cls._instance
-
-    def __init__(self, db_name: str = None):
-        """Инициализация подключения к базе данных."""
-        if db_name:
-            DatabaseManager._db_name = db_name
-
-        # Если соединение уже установлено, пропускаем инициализацию
-        if self._connection is not None:
-            return
-
-        self._connection = sqlite3.connect(
-            DatabaseManager._db_name,
-            check_same_thread=False  # Для безопасности в многопоточных приложениях
-        )
-        self._connection.row_factory = sqlite3.Row  # Преобразует строки в словари
+    def _connect(self):
+        """Установка соединения с базой данных"""
+        self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.connection.row_factory = sqlite3.Row
         self._create_tables()
 
-    @classmethod
-    def reset_instance(cls):
-        """Сбросить синглтон-экземпляр (для тестирования)."""
-        if cls._connection:
-            cls._connection.close()
-        cls._instance = None
-        cls._connection = None
-        cls._db_name = "finance.db"
-
     def _create_tables(self):
-        """
-        Создаёт таблицы в базе данных, если они ещё не существуют.
-        Использует SQL-транзакцию для атомарности.
-        """
-        sql_script = """
-        -- Таблица категорий
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            description TEXT,
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
+        """Создание таблиц если они не существуют"""
+        cursor = self.connection.cursor()
 
-        -- Таблица операций (доходы/расходы)
-        CREATE TABLE IF NOT EXISTS operations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            amount REAL NOT NULL CHECK (amount > 0),
-            type TEXT NOT NULL CHECK (type IN ('доход', 'расход')),
-            category_id INTEGER NOT NULL,
-            date TIMESTAMP NOT NULL,
-            comment TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (category_id) REFERENCES categories (id)
-                ON DELETE RESTRICT  -- Запрещаем удалять категорию, если есть операции
-        );
+        # Таблица категорий
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT DEFAULT '',
+                is_active BOOLEAN DEFAULT 1
+            )
+        """)
 
-        -- Индексы для ускорения поиска
-        CREATE INDEX IF NOT EXISTS idx_operations_date ON operations(date);
-        CREATE INDEX IF NOT EXISTS idx_operations_type ON operations(type);
-        CREATE INDEX IF NOT EXISTS idx_operations_category ON operations(category_id);
-        """
+        # Таблица операций
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS operations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                amount REAL NOT NULL,
+                type TEXT NOT NULL,
+                category_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                comment TEXT DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (category_id) REFERENCES categories(id)
+            )
+        """)
 
-        with self._connection:
-            # executemany выполняет несколько SQL-команд
-            self._connection.executescript(sql_script)
+        # Создаем индекс для быстрого поиска по дате
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_operations_date ON operations(date)
+        """)
 
-    @contextmanager
-    def get_cursor(self):
-        """
-        Контекстный менеджер для работы с курсором.
-        Гарантирует закрытие курсора даже при возникновении ошибки.
-        """
-        cursor = self._connection.cursor()
-        try:
-            yield cursor
-        finally:
-            cursor.close()
+        self.connection.commit()
 
-    # ===== МЕТОДЫ ДЛЯ РАБОТЫ С КАТЕГОРИЯМИ =====
+    # === Работа с категориями ===
 
     def save_category(self, category: Category) -> int:
-        """
-        Сохраняет категорию в базу данных.
-        Возвращает ID сохранённой категории.
-        """
-        sql = """
-        INSERT OR REPLACE INTO categories (id, name, description, is_active)
-        VALUES (?, ?, ?, ?)
-        """
+        """Сохранение категории"""
+        cursor = self.connection.cursor()
 
-        # Преобразуем объект Category в кортеж для SQL-запроса
-        params = (
-            category.id if category.id is not None else None,
-            category.name,
-            category.description,
-            1 if category.is_active else 0  # Преобразуем bool в int для SQLite
-        )
+        if category.id is None:
+            cursor.execute("""
+                INSERT INTO categories (name, description, is_active)
+                VALUES (?, ?, ?)
+            """, (category.name, category.description, 1 if category.is_active else 0))
+            category.id = cursor.lastrowid
+        else:
+            cursor.execute("""
+                UPDATE categories 
+                SET name = ?, description = ?, is_active = ?
+                WHERE id = ?
+            """, (category.name, category.description,
+                  1 if category.is_active else 0, category.id))
 
-        with self.get_cursor() as cursor:
-            cursor.execute(sql, params)
-            self._connection.commit()
-
-            # Если у категории не было ID, получаем сгенерированный
-            if category.id is None:
-                category.id = cursor.lastrowid
-
+        self.connection.commit()
         return category.id
 
-    def get_all_categories(self, active_only: bool = True) -> List[Category]:
-        """
-        Возвращает список всех категорий из базы данных.
+    def get_category(self, category_id: int) -> Optional[Category]:
+        """Получение категории по ID"""
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT * FROM categories WHERE id = ?", (category_id,))
+        row = cursor.fetchone()
 
-        Args:
-            active_only: если True, возвращает только активные категории
-        """
-        sql = "SELECT * FROM categories"
-        if active_only:
-            sql += " WHERE is_active = 1"
-        sql += " ORDER BY name"
+        if row:
+            return Category(
+                id=row['id'],
+                name=row['name'],
+                description=row['description'],
+                is_active=bool(row['is_active'])
+            )
+        return None
+
+    def get_all_categories(self) -> List[Category]:
+        """Получение всех категорий"""
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT * FROM categories ORDER BY name")
 
         categories = []
-        with self.get_cursor() as cursor:
-            cursor.execute(sql)
-            rows = cursor.fetchall()
-
-            for row in rows:
-                # Преобразуем строку БД в объект Category
-                category = Category(
-                    id=row['id'],
-                    name=row['name'],
-                    description=row['description'] or "",
-                    is_active=bool(row['is_active'])
-                )
-                categories.append(category)
+        for row in cursor.fetchall():
+            categories.append(Category(
+                id=row['id'],
+                name=row['name'],
+                description=row['description'],
+                is_active=bool(row['is_active'])
+            ))
 
         return categories
 
-    # ===== МЕТОДЫ ДЛЯ РАБОТЫ С ОПЕРАЦИЯМИ =====
+    # === Работа с операциями ===
 
     def save_operation(self, operation: Operation) -> int:
-        """
-        Сохраняет операцию в базу данных.
-        Сначала сохраняет категорию (если нужно), затем саму операцию.
-        """
-        # 1. Сохраняем категорию (если у неё нет ID)
+        """Сохранение операции"""
+        # Сначала сохраняем категорию если нужно
         if operation.category.id is None:
             self.save_category(operation.category)
 
-        # 2. Сохраняем операцию
-        sql = """
-        INSERT OR REPLACE INTO operations 
-            (id, amount, type, category_id, date, comment, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """
+        cursor = self.connection.cursor()
 
-        params = (
-            operation.id if operation.id is not None else None,
-            operation.amount,
-            operation.type.value,  # Используем .value для получения строки
-            operation.category.id,
-            operation.date.isoformat(),  # Преобразуем datetime в строку ISO
-            operation.comment,
-            datetime.now().isoformat()  # Обновляем время изменения
-        )
+        if operation.id is None:
+            cursor.execute("""
+                INSERT INTO operations (amount, type, category_id, date, comment)
+                VALUES (?, ?, ?, ?, ?)
+            """, (operation.amount, operation.type.value,
+                  operation.category.id,
+                  operation.date.strftime("%Y-%m-%d %H:%M:%S"),
+                  operation.comment))
+            operation.id = cursor.lastrowid
+        else:
+            cursor.execute("""
+                UPDATE operations 
+                SET amount = ?, type = ?, category_id = ?, date = ?, comment = ?
+                WHERE id = ?
+            """, (operation.amount, operation.type.value,
+                  operation.category.id,
+                  operation.date.strftime("%Y-%m-%d %H:%M:%S"),
+                  operation.comment, operation.id))
 
-        with self.get_cursor() as cursor:
-            cursor.execute(sql, params)
-            self._connection.commit()
-
-            if operation.id is None:
-                operation.id = cursor.lastrowid
-
+        self.connection.commit()
         return operation.id
 
-    def get_all_operations(
-            self,
-            start_date: Optional[datetime] = None,
-            end_date: Optional[datetime] = None,
-            operation_type: Optional[OperationType] = None,
-            category_id: Optional[int] = None
-    ) -> List[Operation]:
-        """
-        Возвращает список операций с возможностью фильтрации.
+    def get_operation(self, operation_id: int) -> Optional[Operation]:
+        """Получение операции по ID"""
+        cursor = self.connection.cursor()
+        cursor.execute("""
+            SELECT o.*, c.name as category_name, c.description as category_description
+            FROM operations o
+            JOIN categories c ON o.category_id = c.id
+            WHERE o.id = ?
+        """, (operation_id,))
 
-        Args:
-            start_date: начальная дата для фильтрации
-            end_date: конечная дата для фильтрации
-            operation_type: тип операции (доход/расход)
-            category_id: ID категории для фильтрации
-        """
-        sql = """
-        SELECT o.*, c.name as category_name, c.description as category_description
-        FROM operations o
-        JOIN categories c ON o.category_id = c.id
-        WHERE 1=1
+        row = cursor.fetchone()
+        if row:
+            date_str = row['date']
+            try:
+                # Пробуем ISO формат с разделителем 'T'
+                op_date = datetime.fromisoformat(date_str)
+            except ValueError:
+                try:
+                    # Пробуем формат без времени
+                    op_date = datetime.strptime(date_str, "%Y-%m-%d")
+                except ValueError:
+                    # Пробуем наш формат с пробелом
+                    op_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+
+            category = Category(
+                id=row['category_id'],
+                name=row['category_name'],
+                description=row['category_description']
+            )
+
+            return Operation(
+                id=row['id'],
+                amount=row['amount'],
+                type=OperationType(row['type']),
+                category=category,
+                date=op_date,
+                comment=row['comment']
+            )
+        return None
+
+    def get_all_operations(self,
+                           start_date: Optional[datetime] = None,
+                           end_date: Optional[datetime] = None) -> List[Operation]:
+        """Получение всех операций с фильтрацией по дате"""
+        cursor = self.connection.cursor()
+
+        query = """
+            SELECT o.*, c.name as category_name, c.description as category_description
+            FROM operations o
+            JOIN categories c ON o.category_id = c.id
         """
         params = []
 
-        # Динамически добавляем условия фильтрации
-        if start_date:
-            sql += " AND o.date >= ?"
-            params.append(start_date.isoformat())
-        if end_date:
-            sql += " AND o.date <= ?"
-            params.append(end_date.isoformat())
-        if operation_type:
-            sql += " AND o.type = ?"
-            params.append(operation_type.value)
-        if category_id:
-            sql += " AND o.category_id = ?"
-            params.append(category_id)
+        if start_date or end_date:
+            query += " WHERE "
+            conditions = []
+            if start_date:
+                conditions.append("date(o.date) >= date(?)")
+                params.append(start_date.strftime("%Y-%m-%d"))
+            if end_date:
+                conditions.append("date(o.date) <= date(?)")
+                params.append(end_date.strftime("%Y-%m-%d"))
+            query += " AND ".join(conditions)
 
-        sql += " ORDER BY o.date DESC, o.id DESC"
+        query += " ORDER BY o.date DESC"
+        cursor.execute(query, params)
 
         operations = []
-        with self.get_cursor() as cursor:
-            cursor.execute(sql, params)
-            rows = cursor.fetchall()
+        for row in cursor.fetchall():
+            date_str = row['date']
+            try:
+                # Пробуем ISO формат с разделителем 'T'
+                op_date = datetime.fromisoformat(date_str)
+            except ValueError:
+                try:
+                    # Пробуем формат без времени
+                    op_date = datetime.strptime(date_str, "%Y-%m-%d")
+                except ValueError:
+                    # Пробуем наш формат с пробелом
+                    op_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
 
-            for row in rows:
-                # Создаём объект Category из данных БД
-                category = Category(
-                    id=row['category_id'],
-                    name=row['category_name'],
-                    description=row['category_description'] or "",
-                    is_active=True
-                )
+            category = Category(
+                id=row['category_id'],
+                name=row['category_name'],
+                description=row['category_description']
+            )
 
-                # Создаём объект Operation
-                operation = Operation(
-                    id=row['id'],
-                    amount=row['amount'],
-                    type=OperationType(row['type']),  # Преобразуем строку в Enum
-                    category=category,
-                    date=datetime.fromisoformat(row['date']),
-                    comment=row['comment'] or ""
-                )
-                operations.append(operation)
+            operations.append(Operation(
+                id=row['id'],
+                amount=row['amount'],
+                type=OperationType(row['type']),
+                category=category,
+                date=op_date,
+                comment=row['comment']
+            ))
 
         return operations
 
     def delete_operation(self, operation_id: int) -> bool:
-        """Удаляет операцию по ID. Возвращает True если удаление успешно."""
-        sql = "DELETE FROM operations WHERE id = ?"
+        """Удаление операции"""
+        cursor = self.connection.cursor()
+        cursor.execute("DELETE FROM operations WHERE id = ?", (operation_id,))
+        self.connection.commit()
+        return cursor.rowcount > 0
 
-        with self.get_cursor() as cursor:
-            cursor.execute(sql, (operation_id,))
-            self._connection.commit()
-            return cursor.rowcount > 0
+    def get_balance(self) -> Tuple[float, float, float]:
+        """Получение баланса: доходы, расходы, итог"""
+        cursor = self.connection.cursor()
 
-    def get_balance(self) -> Dict[str, float]:
-        """
-        Рассчитывает текущий баланс, общие доходы и расходы.
-        Использует SQL-агрегацию для эффективного расчёта.
-        """
-        sql = """
-        SELECT 
-            type,
-            SUM(amount) as total
-        FROM operations 
-        GROUP BY type
-        """
+        cursor.execute("""
+            SELECT 
+                SUM(CASE WHEN type = 'доход' THEN amount ELSE 0 END) as income,
+                SUM(CASE WHEN type = 'расход' THEN amount ELSE 0 END) as expense
+            FROM operations
+        """)
 
-        balance = {"доход": 0.0, "расход": 0.0, "баланс": 0.0}
+        row = cursor.fetchone()
+        income = row[0] if row[0] is not None else 0.0
+        expense = row[1] if row[1] is not None else 0.0
 
-        with self.get_cursor() as cursor:
-            cursor.execute(sql)
-            rows = cursor.fetchall()
-
-            for row in rows:
-                balance[row['type']] = row['total']
-
-            # Рассчитываем баланс
-            balance["баланс"] = balance["доход"] - balance["расход"]
-
-        return balance
-
-    # ===== МЕТОДЫ ДЛЯ ИМПОРТА/ЭКСПОРТА =====
-
-    def export_to_csv(self, filepath: str) -> int:
-        """
-        Экспортирует все операции в CSV файл.
-        Возвращает количество экспортированных записей.
-        """
-        import csv
-
-        operations = self.get_all_operations()
-
-        with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
-            # Определяем заголовки CSV
-            fieldnames = ['id', 'date', 'type', 'category', 'amount', 'comment']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
-            writer.writeheader()
-            for op in operations:
-                writer.writerow({
-                    'id': op.id,
-                    'date': op.date.strftime('%Y-%m-%d %H:%M'),
-                    'type': op.type.value,
-                    'category': op.category.name,
-                    'amount': op.amount,
-                    'comment': op.comment
-                })
-
-        return len(operations)
+        return float(income), float(expense), float(income - expense)
 
     def close(self):
-        """Закрывает соединение с базой данных."""
-        if self._connection:
-            self._connection.close()
-            self._connection = None
-
-    def __del__(self):
-        """Деструктор: автоматически закрывает соединение при удалении объекта."""
-        self.close()
+        """Закрытие соединения с базой"""
+        if self.connection:
+            self.connection.close()

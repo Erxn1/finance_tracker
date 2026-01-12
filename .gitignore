@@ -2,26 +2,52 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
+*.pyd
+.Python
 
 # Файлы окружения / виртуальных сред
 .venv/
 venv/
 env/
+ENV/
+env.bak/
+venv.bak/
 
 # Базы данных и сгенерированные данные
 *.db
 *.sqlite
+*.sqlite3
 *.csv
+data/
+visualizations/
 
-# Файлы IDE (PyCharm)
+# Файлы IDE
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 
 # Файлы покрытия тестами
 .coverage
 .coverage.*
 htmlcov/
+.pytest_cache/
+.mypy_cache/
 
-# Прочее
+# Рабочие файлы и логи
+*.log
+*.tmp
+temp/
+
+# Пакеты
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Операционные системы
 .DS_Store
 Thumbs.db
+desktop.ini

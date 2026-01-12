@@ -1,160 +1,149 @@
 """
-Модуль models.py
-Определяет основные классы данных (сущности) для приложения финансового трекера.
-Используются принципы ООП и аннотации типов для ясности кода.
+Модели данных для финансового трекера
+Классы для представления операций и категорий
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional  # Для указания необязательных полей
+from typing import Optional
 
 
 class OperationType(Enum):
-    """
-    Перечисление (Enum) для типов операций.
-    Enum используется для безопасности: предотвращает опечатки в строках.
-    Вместо строк 'income'/'expense' используем OperationType.INCOME/OperationType.EXPENSE
-    """
-    INCOME = "доход"  # Константа для дохода
-    EXPENSE = "расход"  # Константа для расхода
+    """Типы финансовых операций"""
+    INCOME = "доход"
+    EXPENSE = "расход"
 
 
 @dataclass
 class Category:
-    """
-    Класс, представляющий категорию для доходов/расходов.
-    @dataclass автоматически создаёт конструктор __init__, методы __repr__ и другие.
-    """
-    id: Optional[int] = None  # Уникальный идентификатор, None для новой категории
-    name: str = ""  # Название категории (например, "Еда", "Зарплата")
-    description: str = ""  # Описание категории (необязательное поле)
-    is_active: bool = True  # Флаг активности категории (можно "отключать" старые)
+    """Категория для группировки операций"""
+
+    id: Optional[int] = None
+    name: str = ""
+    description: str = ""
+    is_active: bool = True
 
     def __post_init__(self):
-        """Метод, вызываемый автоматически ПОСЛЕ стандартного конструктора dataclass."""
-        # Валидация данных при создании объекта
-        if not self.name.strip():
-            raise ValueError("Название категории не может быть пустым")
+        """Проверка данных при создании"""
+        self.name = self.name.strip()
+        if not self.name:
+            raise ValueError("Название категории обязательно")
         if len(self.name) > 50:
-            raise ValueError("Название категории слишком длинное")
+            self.name = self.name[:50]
+
+    def __str__(self):
+        return self.name
+
+    @classmethod
+    def default_expense(cls) -> 'Category':
+        """Создаёт категорию по умолчанию для расходов"""
+        return cls(name="Разное", description="Прочие расходы")
+
+    @classmethod
+    def default_income(cls) -> 'Category':
+        """Создаёт категорию по умолчанию для доходов"""
+        return cls(name="Прочие доходы")
 
 
 @dataclass
 class Operation:
-    """
-    Основной класс, представляющий финансовую операцию (доход или расход).
-    Содержит все поля, указанные в техническом задании.
-    """
-    # Основные поля операции
-    id: Optional[int] = None  # Уникальный ID, None для новой операции
-    amount: float = 0.0  # Сумма операции (дробное число)
-    type: OperationType = OperationType.EXPENSE  # Тип из перечисления, по умолчанию расход
-    category: Optional[Category] = None  # Теперь явно указываем, что может быть None
-    date: datetime = field(default_factory=datetime.now)
-    # Дата и время операции, по умолчанию текущие
-    comment: str = ""  # Комментарий пользователя (необязательное поле)
+    """Финансовая операция (доход или расход)"""
 
-    # Служебные поля для учёта времени создания/обновления
-    created_at: datetime = field(default_factory=datetime.now, repr=False)
-    updated_at: datetime = field(default_factory=datetime.now, repr=False)
+    amount: float
+    type: OperationType = OperationType.EXPENSE
+    category: Optional[Category] = None
+    date: datetime = field(default_factory=datetime.now)
+    comment: str = ""
+    id: Optional[int] = None
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
 
     def __post_init__(self):
-        """Проверка данных при создании объекта операции."""
-        # Валидация суммы
+        """Настройка после создания объекта"""
+        # Проверяем сумму
         if self.amount <= 0:
-            raise ValueError(f"Сумма операции должна быть положительной. Получено: {self.amount}")
+            raise ValueError(f"Некорректная сумма: {self.amount}")
 
-        # Проверка категории - если не передана, создаём дефолтную
+        # Устанавливаем категорию по умолчанию если не указана
         if self.category is None:
-            self.category = Category(name="Общее")
+            if self.type == OperationType.INCOME:
+                self.category = Category.default_income()
+            else:
+                self.category = Category.default_expense()
 
-        # Проверка, что category - это объект класса Category
-        if not isinstance(self.category, Category):
-            raise TypeError(f"category должна быть объектом Category. Получено: {type(self.category)}")
-
-        # Обрезка комментария, если он слишком длинный
+        # Обрезаем длинный комментарий
         if len(self.comment) > 200:
-            self.comment = self.comment[:197] + "..."  # Обрезаем и добавляем многоточие
+            self.comment = self.comment[:197] + "..."
 
-    def update_timestamp(self):
-        """Обновляет время последнего изменения операции."""
+    def update(self, **kwargs):
+        """Обновление полей операции"""
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
         self.updated_at = datetime.now()
 
     @property
-    def formatted_amount(self) -> str:
-        """
-        Свойство (property) для форматированного отображения суммы.
-        Возвращает сумму со знаком '+' для доходов и '-' для расходов.
-        """
-        sign = "+" if self.type == OperationType.INCOME else "-"
-        return f"{sign}{self.amount:.2f}"
+    def signed_amount(self) -> float:
+        """Возвращает сумму со знаком (+ для доходов, - для расходов)"""
+        if self.type == OperationType.INCOME:
+            return self.amount
+        return -self.amount
 
-    def get_info(self) -> dict:
-        """
-        Возвращает информацию об операции в виде словаря.
-        Полезно для сериализации (сохранения в JSON/CSV) или передачи в GUI.
-        """
+    @property
+    def formatted_amount(self) -> str:
+        """Отформатированная сумма со знаком"""
+        sign = "+" if self.type == OperationType.INCOME else "-"
+        return f"{sign}{self.amount:.2f} ₽"
+
+    def to_dict(self) -> dict:
+        """Преобразование в словарь для сериализации"""
         return {
             "id": self.id,
             "amount": self.amount,
-            "type": self.type.value,  # Используем .value для получения строки "доход"/"расход"
+            "type": self.type.value,
             "category": self.category.name if self.category else "",
-            "date": self.date.strftime("%Y-%m-%d %H:%M"),  # Форматируем дату в строку
+            "date": self.date.strftime("%Y-%m-%d"),
             "comment": self.comment,
             "formatted_amount": self.formatted_amount
         }
 
+    def __repr__(self):
+        """Краткое строковое представление"""
+        date_str = self.date.strftime("%d.%m.%Y")
+        return f"Операция({date_str}, {self.category.name}, {self.formatted_amount})"
 
-# Пример использования классов (для тестирования модуля)
+
+# Тестовые примеры
 if __name__ == "__main__":
-    """
-    Этот блок выполняется только при ПРЯМОМ запуске models.py,
-    но не при импорте этого модуля в другие файлы.
-    Полезно для быстрого тестирования функциональности.
-    """
+    # Простые тесты без лишних комментариев
+    cat1 = Category(name="Продукты", description="Еда")
+    print(f"Категория: {cat1}")
 
-    # 1. Создаём тестовую категорию
-    food_category = Category(name="Продукты", description="Покупка еды и напитков")
-    print(f"Создана категория: {food_category}")
-
-    # 2. Создаём операцию расхода
-    expense_operation = Operation(
+    # Расход
+    op1 = Operation(
         amount=1500.50,
         type=OperationType.EXPENSE,
-        category=food_category,
-        comment="Покупка продуктов на неделю"
+        category=cat1,
+        comment="Покупка продуктов"
     )
-    print(f"\nСоздана операция расхода: {expense_operation}")
-    print(f"Форматированная сумма: {expense_operation.formatted_amount}")
-    print(f"Информация в виде словаря: {expense_operation.get_info()}")
+    print(f"Расход: {op1}")
+    print(f"Данные: {op1.to_dict()}")
 
-    # 3. Создаём операцию дохода
-    salary_category = Category(name="Зарплата")
-    income_operation = Operation(
-        amount=75000.0,
+    # Доход
+    cat2 = Category(name="Зарплата")
+    op2 = Operation(
+        amount=50000,
         type=OperationType.INCOME,
-        category=salary_category,
-        date=datetime(2024, 5, 25)  # Указываем конкретную дату
+        category=cat2
     )
-    print(f"\nСоздана операция дохода: {income_operation}")
-    print(f"Форматированная сумма: {income_operation.formatted_amount}")
+    print(f"\nДоход: {op2}")
+    print(f"Сумма со знаком: {op2.signed_amount}")
 
-    # 4. Пример обработки ошибок
-    try:
-        # Попытка создать операцию с неверной суммой
-        wrong_operation = Operation(amount=-100)
-    except ValueError as e:
-        print(f"\nОшибка валидации (как и ожидалось): {e}")
+    # Операция без категории
+    op3 = Operation(amount=300, comment="Наличные")
+    print(f"\nОперация без явной категории: {op3}")
 
-    # 5. Тест обрезки комментария
-    long_comment = "Очень длинный комментарий " * 20
-    test_operation = Operation(
-        amount=100.0,
-        category=Category(name="Тест"),
-        comment=long_comment
-    )
-    print(f"\nДлина оригинального комментария: {len(long_comment)}")
-    print(f"Длина обрезанного комментария: {len(test_operation.comment)}")
-    print(f"Комментарий заканчивается на '...': {test_operation.comment.endswith('...')}")
-    print(f"Первые 50 символов комментария: {test_operation.comment[:50]}")
+    # Обновление операции
+    op1.update(amount=2000, comment="Больше продуктов")
+    print(f"\nПосле обновления: {op1.comment}")
